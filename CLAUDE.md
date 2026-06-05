@@ -60,7 +60,7 @@ Raspberry Pi Zero 2W + ZTR01（povo2.0）+ Tailscale で遠隔監視・制御す
 - Model: ZTR01
 - SIM: povo2.0 nanoSIM（2回線目）
 - APN: povo.jp / ユーザー名・PW空白
-- 管理画面: http://192.168.0.1 / PW: 4599
+- 管理画面: http://192.168.0.1 / PW: ****
 - 給電: DC12V 2A（5.5mmジャック センタープラス）
 
 ### Tracer 3210A MPPT
