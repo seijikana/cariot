@@ -114,7 +114,7 @@ network={
 
 network={
     ssid="SPWH_L11_183D74"
-    psk="2B363Z2XL7"
+    psk="****"
     priority=1
     id_str="ztr01"
 }
@@ -123,7 +123,7 @@ network={
 ## ZTR01 APN設定
 
 ```
-管理画面: http://192.168.0.1 / PW: 4599
+管理画面: http://192.168.0.1 / PW: ****
 APN: povo.jp
 ユーザー名・パスワード: 空白
 ```
