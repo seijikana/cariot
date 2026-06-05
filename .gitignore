@@ -1,0 +1,39 @@
+# 機密情報・APIキー
+settings.json
+*.env
+.env*
+secrets.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+
+# ログ・データファイル
+*.csv
+*.log
+*.mp4
+*.jpg
+*.jpeg
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
