@@ -75,6 +75,8 @@ class TracerModbus:
     _IDX_BOOST_RECONNECT  = 9   # 0x9009
     _IDX_LOW_V_RECONNECT  = 10  # 0x900A (変更しない)
 
+    _REG_BOOST_DURATION = 0x906C  # Boost充電タイマー（分）単独書き込み可
+
     def __init__(self):
         from pymodbus.client import ModbusSerialClient
         self._c = ModbusSerialClient(
@@ -91,11 +93,17 @@ class TracerModbus:
         if r.isError():
             raise IOError("Cannot read 0x9000 parameter block")
         self._orig_params = list(r.registers)
-        logger.info("Tracer connected on %s  boost=%.2fV float=%.2fV batttype=%d",
+
+        # Boost充電タイマー（0x906C）を保存
+        rd = self._c.read_holding_registers(self._REG_BOOST_DURATION, count=1, device_id=config.TRACER_SLAVE_ID)
+        self._orig_boost_duration = rd.registers[0] if not rd.isError() else 120
+
+        logger.info("Tracer connected on %s  boost=%.2fV float=%.2fV batttype=%d boost_duration=%dmin",
                     config.TRACER_PORT,
                     self._orig_params[self._IDX_BOOST] * 0.01,
                     self._orig_params[self._IDX_FLOAT] * 0.01,
-                    self._orig_params[self._IDX_BATT_TYPE])
+                    self._orig_params[self._IDX_BATT_TYPE],
+                    self._orig_boost_duration)
 
     @staticmethod
     def _s16(v: int) -> int:
@@ -156,13 +164,15 @@ class TracerModbus:
             return False
         return True
 
-    def stop_charging(self, stop_v: float = None):
-        """充電電圧を全体的に下げて充電を停止（ブロック書き込み）。
+    def stop_charging(self, stop_v: float = None) -> bool:
+        """充電電圧を全体的に下げて充電を停止（ブロック書き込み）。戻り値: 成否。
 
         階層制約: OVReconnect <= ChargingLimit >= Equalize >= Boost >= Float >= BoostReconnect >= LowVoltReconnect
+        注意: Tracerは現在の充電サイクルを継続するため即時停止ではない。
+              次のサイクル（バッテリーがBoostReconnect以下に下がった後）から新目標が適用される。
         """
         if self._stopped:
-            return
+            return True
         low_vr = self._orig_params[self._IDX_LOW_V_RECONNECT]  # 0x900A 変更しない
         br = low_vr + 10              # BoostReconnect > LowVoltReconnect (厳密な大小関係が必要)
         fl = br + 10                  # Float      = BoostReconnect + 0.10V
@@ -181,24 +191,41 @@ class TracerModbus:
 
         if self._write_params(vals):
             self._stopped = True
-            logger.warning("Charging STOPPED boost→%.2fV float→%.2fV (bat_temp > %.1f°C)",
-                           bv * 0.01, fl * 0.01, config.TEMP_HIGH)
+            # Boost充電タイマーを0に → 現在のBoostサイクルを即時終了させる
+            self._c.write_registers(self._REG_BOOST_DURATION, [0], device_id=config.TRACER_SLAVE_ID)
+            # 書き込み直後に読み返して実際にレジスタが変わったか確認
+            rb = self._c.read_holding_registers(0x9007, count=2, device_id=config.TRACER_SLAVE_ID)
+            actual_bv = rb.registers[0] * 0.01 if not rb.isError() else -1
+            actual_fl = rb.registers[1] * 0.01 if not rb.isError() else -1
+            logger.warning(
+                "Charging STOPPED: boost→%.2fV float→%.2fV (readback: boost=%.2fV float=%.2fV)",
+                bv * 0.01, fl * 0.01, actual_bv, actual_fl)
+            return True
+        return False
 
-    def resume_charging(self, normal_v: float = None):
-        """元のパラメータブロックを復元して充電を再開。"""
+    def resume_charging(self, normal_v: float = None) -> bool:
+        """元のパラメータブロックを復元して充電を再開。戻り値: 成否。"""
         if not self._stopped:
-            return
+            return True
         # force_user=False: orig_params[0]の元のbatttypeをそのまま復元する
         if self._write_params(self._orig_params, force_user=False):
             self._stopped = False
+            # Boost充電タイマーを元の値に戻す
+            self._c.write_registers(self._REG_BOOST_DURATION, [self._orig_boost_duration],
+                                    device_id=config.TRACER_SLAVE_ID)
             logger.info("Charging RESUMED boost→%.2fV (bat_temp < %.1f°C)",
                         self._orig_params[self._IDX_BOOST] * 0.01, config.TEMP_LOW)
+            return True
+        logger.error("resume_charging failed (Modbus write error)")
+        return False
 
     def close(self):
         if self._stopped:
             self.resume_charging()
         else:
             self._c.write_registers(0x9000, self._orig_params, device_id=config.TRACER_SLAVE_ID)
+            self._c.write_registers(self._REG_BOOST_DURATION, [self._orig_boost_duration],
+                                    device_id=config.TRACER_SLAVE_ID)
         self._c.close()
 
 

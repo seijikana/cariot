@@ -74,10 +74,13 @@ def control_loop(tracer) -> dict:
 
     temp = data.get("bat_temp")
     if temp is not None:
-        if temp > cfg["temp_high"] and not data.get("charge_stopped"):
-            tracer.stop_charging(cfg["boost_voltage_stop_v"])
-            data["charge_stopped"] = True
-        elif temp < cfg["temp_low"] and data.get("charge_stopped"):
+        if temp >= cfg["temp_high"] and not data.get("charge_stopped"):
+            ok = tracer.stop_charging(cfg["boost_voltage_stop_v"])
+            if ok:
+                data["charge_stopped"] = True
+            else:
+                logger.error("stop_charging failed (Modbus write error)")
+        elif temp <= cfg["temp_low"] and data.get("charge_stopped"):
             tracer.resume_charging(cfg["boost_voltage_normal_v"])
             data["charge_stopped"] = False
 
