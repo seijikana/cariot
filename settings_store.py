@@ -61,8 +61,8 @@ def update(patch: dict):
     except (KeyError, ValueError, TypeError) as e:
         return False, f"パラメータエラー: {e}"
 
-    if not (20.0 <= tl and th <= 65.0):
-        return False, "温度は 20〜65°C の範囲で設定してください"
+    if not (0.0 <= tl and th <= 65.0):
+        return False, "温度は 0〜65°C の範囲で設定してください"
     if tl >= th:
         return False, f"充電再開温度({tl}°C) は停止温度({th}°C) より低くしてください"
     if th - tl < 2.0:

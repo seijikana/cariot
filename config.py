@@ -4,7 +4,7 @@
 # ============================================================
 # Tracer MPPT RS-485 Modbus 設定
 # ============================================================
-TRACER_PORT     = "/dev/ttyUSB0"
+TRACER_PORT     = "/dev/ttyACM0"
 TRACER_BAUDRATE = 115200
 TRACER_SLAVE_ID = 1
 

@@ -65,6 +65,16 @@ class TracerMock:
 class TracerModbus:
     """実機 Tracer 3210A (pymodbus 3.x)。"""
 
+    # 0x9000ブロック内のインデックス
+    _IDX_BATT_TYPE        = 0   # 0x9000
+    _IDX_CHARGING_LIMIT   = 4   # 0x9004
+    _IDX_OV_RECONNECT     = 5   # 0x9005 Over Voltage Reconnect (≤ Charging Limit)
+    _IDX_EQUALIZE         = 6   # 0x9006
+    _IDX_BOOST            = 7   # 0x9007
+    _IDX_FLOAT            = 8   # 0x9008
+    _IDX_BOOST_RECONNECT  = 9   # 0x9009
+    _IDX_LOW_V_RECONNECT  = 10  # 0x900A (変更しない)
+
     def __init__(self):
         from pymodbus.client import ModbusSerialClient
         self._c = ModbusSerialClient(
@@ -76,13 +86,16 @@ class TracerModbus:
             raise ConnectionError(f"Cannot connect to {config.TRACER_PORT}")
 
         self._stopped = False
-        # 起動時にBoost電圧を読み取り保存（再開時に元値へ戻す）
-        r = self._c.read_holding_registers(
-            config.REG_BOOST_VOLTAGE, 1, slave=config.TRACER_SLAVE_ID
-        )
-        self._orig_boost = r.registers[0] if not r.isError() else config.BOOST_VOLTAGE_NORMAL
-        logger.info("Tracer connected on %s  boost_voltage=%.2fV",
-                    config.TRACER_PORT, self._orig_boost * 0.01)
+        # 起動時に全パラメータブロックを保存（復元用）
+        r = self._c.read_holding_registers(0x9000, count=15, device_id=config.TRACER_SLAVE_ID)
+        if r.isError():
+            raise IOError("Cannot read 0x9000 parameter block")
+        self._orig_params = list(r.registers)
+        logger.info("Tracer connected on %s  boost=%.2fV float=%.2fV batttype=%d",
+                    config.TRACER_PORT,
+                    self._orig_params[self._IDX_BOOST] * 0.01,
+                    self._orig_params[self._IDX_FLOAT] * 0.01,
+                    self._orig_params[self._IDX_BATT_TYPE])
 
     @staticmethod
     def _s16(v: int) -> int:
@@ -90,7 +103,7 @@ class TracerModbus:
         return v - 65536 if v > 32767 else v
 
     def _ri(self, addr: int, count: int) -> list:
-        r = self._c.read_input_registers(addr, count, slave=config.TRACER_SLAVE_ID)
+        r = self._c.read_input_registers(addr, count=count, device_id=config.TRACER_SLAVE_ID)
         if r.isError():
             raise IOError(f"Modbus read_input_registers error @ 0x{addr:04X}")
         return r.registers
@@ -106,16 +119,24 @@ class TracerModbus:
         r4 = self._ri(0x3200, 2)
 
         charge_bits = (r4[1] >> 2) & 0x03  # D3:D2
+        pv_v  = round(r1[0] * 0.01, 2)
+        pv_a  = round(r1[1] * 0.01, 2)
+        bat_v = round(r1[4] * 0.01, 2)
+        bat_a = round(r1[5] * 0.01, 2)
+        pv_w  = round(pv_v * pv_a, 1)
+        load_v = round(r2[0] * 0.01, 2)
+        load_a = round(r2[1] * 0.01, 2)
+        load_w = round(load_v * load_a, 1)
         return {
-            "pv_voltage":   round(r1[0] * 0.01, 2),
-            "pv_current":   round(r1[1] * 0.01, 2),
-            "pv_power":     round(((r1[3] << 16) | r1[2]) * 0.01, 1),
-            "bat_voltage":  round(r1[4] * 0.01, 2),
-            "bat_current":  round(r1[5] * 0.01, 2),
-            "bat_power":    round(((r1[7] << 16) | r1[6]) * 0.01, 1),
-            "load_voltage": round(r2[0] * 0.01, 2),
-            "load_current": round(r2[1] * 0.01, 2),
-            "load_power":   round(((r2[3] << 16) | r2[2]) * 0.01, 1),
+            "pv_voltage":   pv_v,
+            "pv_current":   pv_a,
+            "pv_power":     pv_w,
+            "bat_voltage":  bat_v,
+            "bat_current":  bat_a,
+            "bat_power":    round(pv_w - load_w, 1),  # PV - 負荷 = 実充電電力
+            "load_voltage": load_v,
+            "load_current": load_a,
+            "load_power":   load_w,
             "bat_temp":     round(self._s16(r2[4]) * 0.01, 1),
             "bat_soc":      r3[0],   # 0-100 (%)
             "charge_status": _CHARGE_LABEL.get(charge_bits, f"0x{charge_bits:X}"),
@@ -124,31 +145,59 @@ class TracerModbus:
             "mock": False,
         }
 
+    def _write_params(self, params: list) -> bool:
+        """0x9000から15レジスタをブロック書き込み。batttype=USERを先頭に設定して書く。"""
+        vals = list(params)
+        vals[self._IDX_BATT_TYPE] = 0  # USER必須
+        r = self._c.write_registers(0x9000, vals, device_id=config.TRACER_SLAVE_ID)
+        if r.isError():
+            logger.error("write_registers(0x9000) failed: %s", r)
+            return False
+        return True
+
     def stop_charging(self, stop_v: float = None):
-        """Boost電圧を下げて充電を停止（EEPROM書き込み）。stop_v=None で config デフォルト使用。"""
+        """充電電圧を全体的に下げて充電を停止（ブロック書き込み）。
+
+        階層制約: OVReconnect <= ChargingLimit >= Equalize >= Boost >= Float >= BoostReconnect >= LowVoltReconnect
+        """
         if self._stopped:
             return
-        raw = int(round(stop_v * 100)) if stop_v is not None else config.BOOST_VOLTAGE_STOP
-        r = self._c.write_register(config.REG_BOOST_VOLTAGE, raw, slave=config.TRACER_SLAVE_ID)
-        if not r.isError():
+        low_vr = self._orig_params[self._IDX_LOW_V_RECONNECT]  # 0x900A 変更しない
+        br = low_vr + 10              # BoostReconnect > LowVoltReconnect (厳密な大小関係が必要)
+        fl = br + 10                  # Float      = BoostReconnect + 0.10V
+        bv = fl + 10                  # Boost      = Float      + 0.10V
+        eq = bv + 10                  # Equalize   = Boost      + 0.10V
+        cl = eq + 10                  # ChargingLimit = Equalize + 0.10V
+        ovr = cl                      # OVReconnect = ChargingLimit (制約: OVReconnect <= ChargingLimit)
+
+        vals = list(self._orig_params)
+        vals[self._IDX_CHARGING_LIMIT]  = cl
+        vals[self._IDX_OV_RECONNECT]    = ovr
+        vals[self._IDX_EQUALIZE]        = eq
+        vals[self._IDX_BOOST]           = bv
+        vals[self._IDX_FLOAT]           = fl
+        vals[self._IDX_BOOST_RECONNECT] = br
+
+        if self._write_params(vals):
             self._stopped = True
-            logger.warning("Charging STOPPED boost→%.2fV (bat_temp > %.1f°C)",
-                           raw * 0.01, config.TEMP_HIGH)
+            logger.warning("Charging STOPPED boost→%.2fV float→%.2fV (bat_temp > %.1f°C)",
+                           bv * 0.01, fl * 0.01, config.TEMP_HIGH)
 
     def resume_charging(self, normal_v: float = None):
-        """Boost電圧を戻して充電を再開（EEPROM書き込み）。normal_v=None で起動時読み取り値使用。"""
+        """元のパラメータブロックを復元して充電を再開。"""
         if not self._stopped:
             return
-        raw = int(round(normal_v * 100)) if normal_v is not None else self._orig_boost
-        r = self._c.write_register(config.REG_BOOST_VOLTAGE, raw, slave=config.TRACER_SLAVE_ID)
-        if not r.isError():
+        if self._write_params(self._orig_params):
             self._stopped = False
             logger.info("Charging RESUMED boost→%.2fV (bat_temp < %.1f°C)",
-                        raw * 0.01, config.TEMP_LOW)
+                        self._orig_params[self._IDX_BOOST] * 0.01, config.TEMP_LOW)
 
     def close(self):
         if self._stopped:
             self.resume_charging()
+        else:
+            # batttype を元に戻す（USERのまま終了しないよう）
+            self._c.write_registers(0x9000, self._orig_params, device_id=config.TRACER_SLAVE_ID)
         self._c.close()
 
 
