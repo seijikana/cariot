@@ -145,10 +145,11 @@ class TracerModbus:
             "mock": False,
         }
 
-    def _write_params(self, params: list) -> bool:
-        """0x9000から15レジスタをブロック書き込み。batttype=USERを先頭に設定して書く。"""
+    def _write_params(self, params: list, force_user: bool = True) -> bool:
+        """0x9000から15レジスタをブロック書き込み。force_user=Trueで先頭をUSER(0)に設定。"""
         vals = list(params)
-        vals[self._IDX_BATT_TYPE] = 0  # USER必須
+        if force_user:
+            vals[self._IDX_BATT_TYPE] = 0  # カスタム電圧書き込みにはUSERが必要
         r = self._c.write_registers(0x9000, vals, device_id=config.TRACER_SLAVE_ID)
         if r.isError():
             logger.error("write_registers(0x9000) failed: %s", r)
@@ -187,7 +188,8 @@ class TracerModbus:
         """元のパラメータブロックを復元して充電を再開。"""
         if not self._stopped:
             return
-        if self._write_params(self._orig_params):
+        # force_user=False: orig_params[0]の元のbatttypeをそのまま復元する
+        if self._write_params(self._orig_params, force_user=False):
             self._stopped = False
             logger.info("Charging RESUMED boost→%.2fV (bat_temp < %.1f°C)",
                         self._orig_params[self._IDX_BOOST] * 0.01, config.TEMP_LOW)
@@ -196,7 +198,6 @@ class TracerModbus:
         if self._stopped:
             self.resume_charging()
         else:
-            # batttype を元に戻す（USERのまま終了しないよう）
             self._c.write_registers(0x9000, self._orig_params, device_id=config.TRACER_SLAVE_ID)
         self._c.close()
 
