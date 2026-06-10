@@ -39,6 +39,7 @@ REG_BOOST_VOLTAGE = 0x9007   # Boost充電電圧
 # ヒステリシス制御：変化時のみ書き込み → 最悪1,000回で5.5年
 BOOST_VOLTAGE_NORMAL = 0x0578   # 14.00V（通常充電）
 BOOST_VOLTAGE_STOP   = 0x04B0   # 12.00V（充電停止・バッテリー電圧以下）
+FLOAT_VOLTAGE_NORMAL = 0x0532   # 13.30V（LiFePO4静止電圧付近: 実質Float停止）
 # ※ 実機で事前にTracerの現在値を読み取って確認すること
 
 # ============================================================

@@ -10,6 +10,7 @@ import logging
 import threading
 
 import config
+import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,14 @@ class TracerModbus:
                     self._orig_params[self._IDX_BATT_TYPE],
                     self._orig_boost_duration)
 
+        # 起動時に設定済みFloat電圧を即時適用
+        init_params = self._normal_params()
+        if init_params[self._IDX_FLOAT] != self._orig_params[self._IDX_FLOAT]:
+            self._write_params(init_params, force_user=False)
+            logger.info("Float voltage applied on startup: %.2fV (EEPROM was %.2fV)",
+                        init_params[self._IDX_FLOAT] * 0.01,
+                        self._orig_params[self._IDX_FLOAT] * 0.01)
+
     @staticmethod
     def _s16(v: int) -> int:
         """符号なし16bit → 符号付き16bit（温度レジスタ用）。"""
@@ -158,6 +167,16 @@ class TracerModbus:
             "charge_stopped": self._stopped,
             "mock": False,
         }
+
+    def _normal_params(self) -> list:
+        """通常充電時のパラメータ: orig_params のFloat電圧を設定値で上書きして返す。"""
+        cfg = settings_store.get()
+        fv = round(cfg.get("float_voltage_v", config.FLOAT_VOLTAGE_NORMAL * 0.01) * 100)
+        vals = list(self._orig_params)
+        # 階層制約: BoostReconnect <= Float <= Boost
+        fv = max(vals[self._IDX_BOOST_RECONNECT], min(vals[self._IDX_BOOST], fv))
+        vals[self._IDX_FLOAT] = fv
+        return vals
 
     def _write_params(self, params: list, force_user: bool = True) -> bool:
         """0x9000から15レジスタをブロック書き込み。force_user=Trueで先頭をUSER(0)に設定。"""
@@ -222,14 +241,16 @@ class TracerModbus:
     def _resume_charging_locked(self) -> bool:
         if not self._stopped:
             return True
+        params = self._normal_params()
         # force_user=False: orig_params[0]の元のbatttypeをそのまま復元する
-        if self._write_params(self._orig_params, force_user=False):
+        if self._write_params(params, force_user=False):
             self._stopped = False
             # Boost充電タイマーを元の値に戻す
             self._c.write_registers(self._REG_BOOST_DURATION, [self._orig_boost_duration],
                                     device_id=config.TRACER_SLAVE_ID)
-            logger.info("Charging RESUMED boost→%.2fV",
-                        self._orig_params[self._IDX_BOOST] * 0.01)
+            logger.info("Charging RESUMED boost→%.2fV float→%.2fV",
+                        params[self._IDX_BOOST] * 0.01,
+                        params[self._IDX_FLOAT] * 0.01)
             return True
         logger.error("resume_charging failed (Modbus write error)")
         return False

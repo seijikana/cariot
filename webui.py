@@ -343,7 +343,7 @@ nav a{color:var(--bl);text-decoration:none;font-size:.85rem;margin-left:12px}
 </div>
 
 <div class="card">
-  <h2>&#9889; Boost電圧制御 <span class="etag">充電制御時にEEPROM書き込み</span></h2>
+  <h2>&#9889; Boost / Float 電圧制御 <span class="etag">充電制御時にEEPROM書き込み</span></h2>
   <div class="wnote">ここで保存しても即座にEEPROMへは書き込まれません。<br>温度閾値を超えて充電停止・再開が実行されたとき初めてTracerのEEPROMに書き込まれます。</div>
   <div class="field">
     <label>通常充電 Boost 電圧</label>
@@ -352,6 +352,14 @@ nav a{color:var(--bl);text-decoration:none;font-size:.85rem;margin-left:12px}
       <span class="unit">V</span>
     </div>
     <div class="hint">LiFePO4 12Vシステム推奨: 14.00〜14.40V</div>
+  </div>
+  <div class="field">
+    <label>Float 電圧</label>
+    <div class="ir">
+      <input type="number" id="float_voltage" step="0.01" min="10.0" max="15.5">
+      <span class="unit">V</span>
+    </div>
+    <div class="hint">LiFePO4は Float 不要。静止電圧付近（13.30V）に設定すると満充電後に自然停止します</div>
   </div>
   <div class="field">
     <label>充電停止電圧（Boost を強制的に下げる値）</label>
@@ -368,7 +376,7 @@ nav a{color:var(--bl);text-decoration:none;font-size:.85rem;margin-left:12px}
   <div class="field">
     <label>過電圧検出閾値（停止）</label>
     <div class="ir">
-      <input type="number" id="bms_ov_stop" step="0.01" min="3.50" max="3.80">
+      <input type="number" id="bms_ov_stop" step="0.01">
       <span class="unit">V/cell</span>
     </div>
     <div class="hint">この値以上でTracerの充電を停止します（LiFePO4推奨: 3.65V）</div>
@@ -376,7 +384,7 @@ nav a{color:var(--bl);text-decoration:none;font-size:.85rem;margin-left:12px}
   <div class="field">
     <label>過電圧復帰閾値</label>
     <div class="ir">
-      <input type="number" id="bms_ov_resume" step="0.01" min="3.40" max="3.79">
+      <input type="number" id="bms_ov_resume" step="0.01">
       <span class="unit">V/cell</span>
     </div>
     <div class="hint">この値を下回ると充電を再開します（ヒステリシス: 推奨 0.05V以上）</div>
@@ -418,6 +426,7 @@ async function load(){
     $('temp_high').value=d.temp_high;
     $('temp_low').value=d.temp_low;
     $('boost_normal').value=d.boost_voltage_normal_v;
+    $('float_voltage').value=d.float_voltage_v;
     $('boost_stop').value=d.boost_voltage_stop_v;
     $('bms_ov_stop').value=d.bms_ov_stop_v;
     $('bms_ov_resume').value=d.bms_ov_resume_v;
@@ -430,6 +439,7 @@ $('save').addEventListener('click',async()=>{
     temp_high:parseFloat($('temp_high').value),
     temp_low:parseFloat($('temp_low').value),
     boost_voltage_normal_v:parseFloat($('boost_normal').value),
+    float_voltage_v:parseFloat($('float_voltage').value),
     boost_voltage_stop_v:parseFloat($('boost_stop').value),
     bms_ov_stop_v:parseFloat($('bms_ov_stop').value),
     bms_ov_resume_v:parseFloat($('bms_ov_resume').value),
