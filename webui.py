@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request, abort, send_from_directory, render_te
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
+import bms as bms_module
 import config
 import history_store
 import settings_store
@@ -126,6 +127,15 @@ footer{color:var(--dm);font-size:.72rem;text-align:center;
     </div>
   </div>
 </div>
+<div class="card" style="margin-bottom:10px">
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <div class="ct" style="margin-bottom:0">&#128267; BMS監視 <span id="bms-ctrl-st"></span></div>
+    <button class="gnav" id="bms-ctrl-btn" onclick="toggleBmsCtrl()">...</button>
+  </div>
+  <div id="bms-ctrl-warn" style="display:none;font-size:.75rem;color:var(--y);margin-top:6px">
+    &#9888; OFF中はRaspiがBMSから切断されスマホ等から直接接続できますが、過電圧保護の監視も停止します
+  </div>
+</div>
 <div class="g2" id="bms-wrap" style="margin-bottom:10px;display:none">
   <div class="card">
     <div class="ct">&#128267; BMS1</div>
@@ -177,6 +187,49 @@ function renderBMS(el,b){
     +cells
     +'<div class="row" style="'+fade+'"><span class="lbl">バランス差</span><span class="val '+dcls+'">'+delta+'</span></div>';
 }
+let bmsEnabled=true;
+function renderBmsCtrl(){
+  const btn=$('bms-ctrl-btn'),st=$('bms-ctrl-st'),warn=$('bms-ctrl-warn');
+  if(bmsEnabled){
+    st.textContent='';st.className='';
+    btn.textContent='ON（タップでOFF）';btn.className='gnav';
+    warn.style.display='none';
+  }else{
+    st.textContent='OFF';st.className='r';
+    btn.textContent='OFF（タップでON）';btn.className='gnav';btn.style.color='var(--r)';btn.style.borderColor='var(--r)';
+    warn.style.display='block';
+  }
+}
+async function refreshBmsCtrl(){
+  try{
+    const d=await fetch('/api/bms/ctrl').then(r=>r.json());
+    bmsEnabled=d.enabled;
+    renderBmsCtrl();
+  }catch(e){}
+}
+async function toggleBmsCtrl(){
+  const btn=$('bms-ctrl-btn');
+  btn.disabled=true;
+  try{
+    const r=await fetch('/api/bms/ctrl',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:!bmsEnabled}),
+    });
+    if(r.ok){
+      const d=await r.json();
+      bmsEnabled=d.enabled;
+      renderBmsCtrl();
+    }else{
+      alert('切替に失敗しました ('+r.status+')');
+    }
+  }catch(e){
+    alert('通信エラー: '+e);
+  }
+  btn.disabled=false;
+}
+renderBmsCtrl();refreshBmsCtrl();
+
 async function refresh(){
   try{
     const d=await fetch('/api/status').then(r=>r.json());
@@ -224,9 +277,9 @@ refresh();setInterval(refresh,5000);
 <div class="card" style="margin-top:10px" id="graph-card">
   <div class="ct">&#9889; 電力履歴</div>
   <div style="display:flex;gap:4px;margin-bottom:10px" id="stabs">
-    <button class="stab on" data-s="minute">分</button>
+    <button class="stab" data-s="minute">分</button>
     <button class="stab" data-s="hour">時</button>
-    <button class="stab" data-s="day">日</button>
+    <button class="stab on" data-s="day">日</button>
     <button class="stab" data-s="week">週</button>
     <button class="stab" data-s="month">月</button>
   </div>
@@ -245,14 +298,14 @@ refresh();setInterval(refresh,5000);
   <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
     <button class="gnav" id="g-older">&#8592; 過去へ</button>
     <span id="g-range" style="font-size:.7rem;color:var(--dm);text-align:center;flex:1;padding:0 6px"></span>
-    <button class="gnav" id="g-newer">最新へ &#8594;</button>
+    <button class="gnav" id="g-newer">次へ &#8594;</button>
   </div>
 </div>
 
 <script src="/static/chart.umd.min.js"></script>
 <script>
 (function(){
-  var gScale='minute', gBefore=null, gChart=null, gPoints=[];
+  var gScale='day', gBefore=null, gChart=null, gPoints=[], gStack=[];
   var LIMITS={minute:120,hour:72,day:60,week:52,month:24};
   var UNITS={minute:'W',hour:'Wh',day:'Wh',week:'Wh',month:'Wh'};
   var $=function(id){return document.getElementById(id);};
@@ -282,7 +335,7 @@ refresh();setInterval(refresh,5000);
     var labels=data.points.map(function(p){return fmtTs(p.t,gScale);});
     $('g-range').textContent=fmtRange(data.points);
     $('g-older').disabled=!data.has_more;
-    $('g-newer').disabled=gBefore===null;
+    $('g-newer').disabled=gStack.length===0;
 
     var ds=[
       {type:'line',label:'電圧',data:data.points.map(function(p){return p.bat_v;}),yAxisID:'y1',
@@ -348,15 +401,15 @@ refresh();setInterval(refresh,5000);
   }
 
   function doOlder(){
-    if(gPoints.length>0)loadGraph(gPoints[0].t);
+    if(gPoints.length>0){gStack.push(gBefore);loadGraph(gPoints[0].t);}
   }
   function doNewer(){
-    gBefore=null;loadGraph(null);
+    if(gStack.length>0){var b=gStack.pop();loadGraph(b);}
   }
 
   document.querySelectorAll('.stab').forEach(function(b){
     b.addEventListener('click',function(){
-      gScale=b.dataset.s;gBefore=null;
+      gScale=b.dataset.s;gBefore=null;gStack=[];
       document.querySelectorAll('.stab').forEach(function(x){x.classList.remove('on');});
       b.classList.add('on');
       loadGraph(null);
@@ -530,6 +583,14 @@ nav a{color:var(--bl);text-decoration:none;font-size:.85rem;margin-left:12px}
 <div class="card">
   <h2>&#128267; BMS セル過電圧保護</h2>
   <div class="field">
+    <label>BMS負荷 無視閾値</label>
+    <div class="ir">
+      <input type="number" id="bms_load_thr" step="1" min="0" max="200">
+      <span class="unit">W</span>
+    </div>
+    <div class="hint">この値未満のBMS負荷は二重計上とみなしチャートに表示しません（インバータ等の大出力は表示）</div>
+  </div>
+  <div class="field">
     <label>過電圧検出閾値（停止）</label>
     <div class="ir">
       <input type="number" id="bms_ov_stop" step="0.01">
@@ -584,6 +645,7 @@ async function load(){
     $('boost_normal').value=d.boost_voltage_normal_v;
     $('float_voltage').value=d.float_voltage_v;
     $('boost_stop').value=d.boost_voltage_stop_v;
+    $('bms_load_thr').value=d.bms_load_threshold_w;
     $('bms_ov_stop').value=d.bms_ov_stop_v;
     $('bms_ov_resume').value=d.bms_ov_resume_v;
     upd();updOv();
@@ -597,6 +659,7 @@ $('save').addEventListener('click',async()=>{
     boost_voltage_normal_v:parseFloat($('boost_normal').value),
     float_voltage_v:parseFloat($('float_voltage').value),
     boost_voltage_stop_v:parseFloat($('boost_stop').value),
+    bms_load_threshold_w:parseFloat($('bms_load_thr').value),
     bms_ov_stop_v:parseFloat($('bms_ov_stop').value),
     bms_ov_resume_v:parseFloat($('bms_ov_resume').value),
   };
@@ -941,6 +1004,25 @@ def index():
 @app.route("/api/status")
 def api_status():
     return jsonify(get_status())
+
+
+@app.route("/api/bms/ctrl", methods=["GET"])
+def api_bms_ctrl_get():
+    return jsonify({"enabled": bms_module.is_polling_enabled()})
+
+
+@app.route("/api/bms/ctrl", methods=["POST"])
+@auth.login_required
+def api_bms_ctrl_post():
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled")
+    if enabled is True:
+        bms_module.enable_polling()
+    elif enabled is False:
+        bms_module.disable_polling()
+    else:
+        return jsonify({"ok": False, "error": "enabled(bool)は必須です"}), 400
+    return jsonify({"ok": True, "enabled": bms_module.is_polling_enabled()})
 
 
 @app.route("/api/history")

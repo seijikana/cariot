@@ -3,6 +3,7 @@
 NetworkManager経由でWiFiを制御する。
 接続先不在が続くとAPモードを起動し、WebUIからWiFi設定を変更できる。
 """
+import os
 import subprocess
 import threading
 import time
@@ -17,10 +18,15 @@ AP_CON_NAME = "cariot-hotspot"
 _lock = threading.Lock()
 _ap_active = False
 
+# nmcli -t の出力をロケールに関係なく英語(yes/no)で固定するため LANG=C を強制する。
+# 日本語ロケールだと active 列が「はい/いいえ」になり、文字列比較が壊れて
+# 常に未接続と誤判定 → APモードが無限に再発する不具合があったため。
+_NMCLI_ENV = {**os.environ, "LANG": "C", "LC_ALL": "C"}
+
 
 def _nmcli(*args, sudo=False):
     cmd = (["sudo"] if sudo else []) + ["nmcli"] + list(args)
-    return subprocess.run(cmd, capture_output=True, text=True)
+    return subprocess.run(cmd, capture_output=True, text=True, env=_NMCLI_ENV)
 
 
 def _sync_ap_state():
@@ -160,6 +166,7 @@ def start_ap() -> tuple:
                    "ipv4.method", "shared",
                    "ipv4.addresses", f"{config.AP_IP}/24",
                    "ipv6.method", "disabled",
+                   "connection.autoconnect", "no",
                    sudo=True)
         if r.returncode != 0:
             err = r.stderr.strip() or r.stdout.strip()

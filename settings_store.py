@@ -25,6 +25,7 @@ def _defaults() -> dict:
         "float_voltage_v":        round(config.FLOAT_VOLTAGE_NORMAL * 0.01, 2),  # Float充電電圧[V]
         "bms_ov_stop_v":          3.65,   # LiFePO4セル過電圧停止閾値[V]
         "bms_ov_resume_v":        3.60,   # LiFePO4セル過電圧復帰閾値[V]（ヒステリシス）
+        "bms_load_threshold_w":   config.BMS_LOAD_THRESHOLD_W,
     }
 
 
@@ -64,6 +65,7 @@ def update(patch: dict):
         fv = float(patch["float_voltage_v"])
         ov_stop   = float(patch["bms_ov_stop_v"])
         ov_resume = float(patch["bms_ov_resume_v"])
+        bms_thr   = float(patch["bms_load_threshold_w"])
     except (KeyError, ValueError, TypeError) as e:
         return False, f"パラメータエラー: {e}"
 
@@ -79,6 +81,8 @@ def update(patch: dict):
         return False, f"充電停止電圧({vs}V) は通常充電電圧({vn}V) より低くしてください"
     if not (10.0 <= fv < vn):
         return False, f"Float電圧({fv}V) は Boost電圧({vn}V) より低くしてください"
+    if not (0.0 <= bms_thr <= 200.0):
+        return False, "BMS負荷閾値は 0〜200W の範囲で設定してください"
     if ov_resume >= ov_stop:
         return False, f"BMS過電圧閾値: 復帰({ov_resume}V) は停止({ov_stop}V) より低くしてください"
 
@@ -88,6 +92,7 @@ def update(patch: dict):
         "boost_voltage_stop_v":   round(vs, 2),
         "float_voltage_v":        round(fv, 2),
         "bms_ov_stop_v":   round(ov_stop,   3),
+        "bms_load_threshold_w": round(bms_thr, 1),
         "bms_ov_resume_v": round(ov_resume, 3),
     }
     with _lock:

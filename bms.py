@@ -52,6 +52,12 @@ _latest: dict  = {}
 _ov_alerted: set = set()   # 過電圧アラート済みBMS名（解消までcallback抑制）
 _alert_callback = None
 
+# BLE監視on/offスイッチ（デフォルトON = 従来の常時監視動作を維持）。
+# OFFにするとBLE切断しスマホ等から直接BMSへ接続できる状態になる。
+# サービス再起動時は常にONへ戻る（フェイルセーフ: 過電圧保護を有効に保つ）。
+_enabled = threading.Event()
+_enabled.set()
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -75,6 +81,26 @@ def is_ov_active() -> bool:
     """いずれかのBMSでセル過電圧が検出中かどうか。"""
     with _lock:
         return len(_ov_alerted) > 0
+
+
+def is_polling_enabled() -> bool:
+    return _enabled.is_set()
+
+
+def enable_polling():
+    """BLE監視を再開する。"""
+    _enabled.set()
+    logger.info("BMS polling enabled")
+
+
+def disable_polling():
+    """BLE監視を停止しBMSから切断する（スマホ等から直接アクセスするため）。
+
+    過電圧アラート状態(_ov_alerted)は解除しない（フェイルセーフ:
+    Tracerの充電停止はそのまま維持される）。
+    """
+    _enabled.clear()
+    logger.info("BMS polling disabled")
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +266,15 @@ async def _monitor_one(name: str, mac: str, shutdown: threading.Event,
     from bleak import BleakClient
 
     while not shutdown.is_set():
+        if not _enabled.is_set():
+            # 監視OFF中: オフライン扱いにして再度ONになるまで待機（接続は試みない）
+            now = datetime.now().isoformat(timespec="seconds")
+            with _lock:
+                _merge_result(name, {"name": name, "mac": mac, "online": False}, now)
+            while not _enabled.is_set() and not shutdown.is_set():
+                await asyncio.sleep(1.0)
+            continue
+
         asm = _Assembler()
         got_data = asyncio.Event()
 
@@ -250,6 +285,7 @@ async def _monitor_one(name: str, mac: str, shutdown: threading.Event,
                 got_data.set()
 
         client = BleakClient(mac, timeout=15.0)
+        disabled_exit = False
         try:
             # 接続・setup はロックして行う（InProgress回避）
             async with ble_lock:
@@ -261,7 +297,7 @@ async def _monitor_one(name: str, mac: str, shutdown: threading.Event,
 
             logger.info("BMS %s connected (%s)", name, mac)
 
-            while not shutdown.is_set() and client.is_connected:
+            while not shutdown.is_set() and client.is_connected and _enabled.is_set():
                 # CMD_BASIC + CMD_CELL もロックして行う
                 async with ble_lock:
                     asm.reset()
@@ -311,11 +347,18 @@ async def _monitor_one(name: str, mac: str, shutdown: threading.Event,
                     result.get("temps"), result.get("cells"),
                 )
 
-                # 次のポーリングまで1秒刻みで待機（shutdownに即応）
+                # 次のポーリングまで1秒刻みで待機（shutdown/OFFに即応）
                 for _ in range(int(_FAST_POLL)):
-                    if shutdown.is_set() or not client.is_connected:
+                    if shutdown.is_set() or not client.is_connected or not _enabled.is_set():
                         break
                     await asyncio.sleep(1.0)
+
+            if not shutdown.is_set() and not _enabled.is_set():
+                disabled_exit = True
+                logger.info("BMS %s polling disabled, disconnecting", name)
+                now = datetime.now().isoformat(timespec="seconds")
+                with _lock:
+                    _merge_result(name, {"name": name, "mac": mac, "online": False}, now)
 
         except Exception as e:
             logger.warning("BMS %s (%s): %s → reconnect in 10s", name, mac, e)
@@ -328,7 +371,11 @@ async def _monitor_one(name: str, mac: str, shutdown: threading.Event,
             except Exception:
                 pass
 
-        if not shutdown.is_set():
+        if disabled_exit:
+            # bluetoothctlレベルでも切断しスマホ等が即座に接続できる状態にする
+            # (blocking呼び出しなのでexecutorへ逃がし他タスクをブロックしない)
+            await asyncio.get_event_loop().run_in_executor(None, _bt_disconnect, mac)
+        elif not shutdown.is_set():
             # ジッターで同時再接続によるInProgressを回避
             await asyncio.sleep(10.0 + random.uniform(0.0, 3.0))
 

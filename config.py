@@ -4,7 +4,7 @@
 # ============================================================
 # Tracer MPPT RS-485 Modbus 設定
 # ============================================================
-TRACER_PORT     = "/dev/ttyACM0"
+TRACER_PORT     = "/dev/ttyTracer"
 TRACER_BAUDRATE = 115200
 TRACER_SLAVE_ID = 1
 
@@ -46,6 +46,7 @@ FLOAT_VOLTAGE_NORMAL = 0x0532   # 13.30V（LiFePO4静止電圧付近: 実質Floa
 # JBD BMS BLE 設定
 # ============================================================
 BMS_MAC_ADDRESS = "XX:XX:XX:XX:XX:XX"   # 要設定: bluetoothctlで確認
+BMS_LOAD_THRESHOLD_W = 15.0       # BMS負荷がこの値未満は無視（Tracer経由の小電力二重計上防止）
 
 BMS_NOTIFY_UUID = "0000ff01-0000-1000-8000-00805f9b34fb"
 BMS_WRITE_UUID  = "0000ff02-0000-1000-8000-00805f9b34fb"

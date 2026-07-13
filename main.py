@@ -89,14 +89,9 @@ def main():
     bms_module.start_polling(_shutdown)
     logger.info("BMS persistent monitoring started")
 
-    wifi_thread = threading.Thread(
-        target=wifi_manager.monitor_loop,
-        args=(_shutdown,),
-        daemon=True,
-        name="wifi-monitor",
-    )
-    wifi_thread.start()
-    logger.info("WiFi monitor started (AP fallback after %ds)", config.AP_WAIT_SEC)
+    # APモード自動起動は無効化（車載HDMI+マウスで手動Wi-Fi設定する運用のため不要。
+    # 散歩中のテザリング切替時など、わずかな切断でAPモードに入って復帰できなくなる問題があった）
+    logger.info("WiFi AP auto-fallback disabled (manual control only)")
 
     flask_thread = threading.Thread(
         target=lambda: webui.app.run(

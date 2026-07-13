@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
+import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,9 @@ def record(status: dict):
         pw = (b or {}).get("pack_w")
         if pw is not None and pw < 0:
             load_bms_w += abs(pw)
+    bms_thr = settings_store.get().get("bms_load_threshold_w", config.BMS_LOAD_THRESHOLD_W)
+    if load_bms_w < bms_thr:
+        load_bms_w = 0.0
 
     bat_v = float(status.get("bat_voltage") or 0)
     bat_temp = status.get("bat_temp")
@@ -271,11 +275,18 @@ def query(scale: str, before: Optional[int] = None, limit: int = 0) -> dict:
 
     has_more = len(rows) > limit
     rows = list(reversed(rows[:limit]))
-    points = [
-        {"t": r[0], "pv": r[1], "chg": r[2], "load_tr": r[3],
-         "load_bms": r[4], "bat_v": r[5], "bat_temp": r[6]}
-        for r in rows
-    ]
+
+    if scale == "minute":
+        def _pt(r):
+            return {"t": r[0], "pv": r[1], "chg": r[2],
+                    "load_tr": r[3], "load_bms": r[4],
+                    "bat_v": r[5], "bat_temp": r[6]}
+    else:
+        def _pt(r):
+            return {"t": r[0], "pv": r[1], "chg": r[2], "load_tr": r[3],
+                    "load_bms": r[4], "bat_v": r[5], "bat_temp": r[6]}
+
+    points = [_pt(r) for r in rows]
     return {"scale": scale, "points": points, "has_more": has_more}
 
 
