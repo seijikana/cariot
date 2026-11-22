@@ -83,6 +83,13 @@ TRACER_LOG_DIR = "/mnt/storage/tracer_log"
 BMS_LOG_DIR    = "/mnt/storage/bms_log"
 BUFFER_DIR     = "/mnt/storage/buffer"
 
+# ダッシュボード用スナップショット（USBカメラのMJPEGノードから1枚取り出す）
+CAMERA_DEVICE          = "/dev/video0"   # H264 USB CameraのMJPEGノード（video2はH264）
+CAMERA_SNAPSHOT_SIZE   = "1280x720"
+CAMERA_INTERVAL_S      = 30     # 秒 撮影間隔のデフォルト（0=停止）。WebUIで変更可
+CAMERA_INTERVAL_MIN_S  = 10     # 秒 1枚の撮影に約7秒かかるため、これより短くしない
+CAMERA_IDLE_STOP_S     = 120    # 秒 最後の閲覧からこの時間が過ぎたら撮影を止める
+
 CAMERA_FPS        = 30
 PRE_SHOCK_SEC     = 120   # 秒 衝撃前バッファ長
 POST_SHOCK_SEC    = 120   # 秒 衝撃後録画長

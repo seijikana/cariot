@@ -26,6 +26,7 @@ def _defaults() -> dict:
         "bms_ov_stop_v":          3.65,   # LiFePO4セル過電圧停止閾値[V]
         "bms_ov_resume_v":        3.60,   # LiFePO4セル過電圧復帰閾値[V]（ヒステリシス）
         "bms_load_threshold_w":   config.BMS_LOAD_THRESHOLD_W,
+        "camera_interval_s":      config.CAMERA_INTERVAL_S,   # ダッシュボードのスナップショット間隔[s]（0=停止）
     }
 
 
@@ -105,4 +106,24 @@ def update(patch: dict):
             return False, f"保存エラー: {e}"
 
     logger.info("Settings saved: TEMP %.1f/%.1f°C  BOOST %.2f/%.2fV", tl, th, vs, vn)
+    return True, ""
+
+
+def set_camera_interval(value):
+    """スナップショット間隔だけを検証・更新・保存する。戻り値: (ok, error_msg)"""
+    try:
+        iv = int(float(value))
+    except (ValueError, TypeError):
+        return False, "間隔は秒数で指定してください"
+    if iv != 0 and not (config.CAMERA_INTERVAL_MIN_S <= iv <= 3600):
+        return False, f"間隔は 0（停止）または {config.CAMERA_INTERVAL_MIN_S}〜3600 秒で指定してください"
+    with _lock:
+        _state["camera_interval_s"] = iv
+        try:
+            with open(_FILE, "w") as f:
+                json.dump(_state, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error("Settings save failed: %s", e)
+            return False, f"保存エラー: {e}"
+    logger.info("Camera snapshot interval set to %ds", iv)
     return True, ""

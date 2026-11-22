@@ -10,11 +10,12 @@ import os
 import threading
 from datetime import datetime
 
-from flask import Flask, jsonify, request, abort, send_from_directory, render_template_string
+from flask import Flask, Response, jsonify, request, abort, send_from_directory, render_template_string
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import bms as bms_module
+import camera as camera_module
 import config
 import history_store
 import settings_store
@@ -90,7 +91,10 @@ footer{color:var(--dm);font-size:.72rem;text-align:center;
       border-radius:4px;padding:4px 10px;font-size:.78rem;cursor:pointer}
 .gnav:hover{border-color:var(--bl);color:var(--bl)}
 .gnav:disabled{opacity:.35;cursor:default}
+.lf-btn{position:absolute;right:8px;bottom:22px;z-index:500}
 </style>
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<script src="/static/leaflet/leaflet.js"></script>
 </head>
 <body>
 <header>
@@ -145,6 +149,34 @@ footer{color:var(--dm);font-size:.72rem;text-align:center;
     <div class="ct">&#128267; BMS2</div>
     <div id="bms2-body"></div>
   </div>
+</div>
+<div class="card" style="margin-bottom:10px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div class="ct" style="margin-bottom:0">&#128247; カメラ <span id="cam-st" style="text-transform:none;letter-spacing:0"></span></div>
+    <select id="cam-iv" class="gnav" onchange="setCamInterval(this.value)">
+      <option value="0">停止</option><option value="10">10秒</option><option value="30">30秒</option>
+      <option value="60">1分</option><option value="300">5分</option>
+    </select>
+  </div>
+  <a id="cam-link" href="/api/camera/snapshot.jpg" target="_blank"><img id="cam-img" style="width:100%;border-radius:6px;display:none" alt="snapshot"></a>
+  <div id="cam-msg" class="lbl"></div>
+</div>
+<div class="card" style="margin-bottom:10px">
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <div class="ct" style="margin-bottom:0">&#128205; GPS 現在地 <span id="gps-fix" style="text-transform:none;letter-spacing:0"></span></div>
+    <a id="gps-map" class="gnav" target="_blank" style="display:none;text-decoration:none">OSMで開く</a>
+  </div>
+  <div style="position:relative;margin:8px 0 4px">
+    <div id="gps-mapbox" style="height:240px;border-radius:6px;background:var(--bg)"></div>
+    <button id="gps-follow" class="gnav lf-btn" style="display:none;background:var(--sf)" onclick="followGPS()">現在地に戻る</button>
+    <div id="gps-mapmsg" class="lbl" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">位置の取得待ち…</div>
+  </div>
+  <div class="row" style="margin-top:6px"><span class="lbl">緯度・経度</span><span class="val" id="gps-ll">--</span></div>
+  <div class="row"><span class="lbl">速度</span><span class="val" id="gps-spd">--</span></div>
+  <div class="row"><span class="lbl">方位</span><span class="val" id="gps-trk">--</span></div>
+  <div class="row"><span class="lbl">高度</span><span class="val" id="gps-alt">--</span></div>
+  <div class="row"><span class="lbl">衛星（使用/捕捉）</span><span class="val" id="gps-sat">--</span></div>
+  <div class="row"><span class="lbl">誤差の目安</span><span class="val" id="gps-eph">--</span></div>
 </div>
 <footer id="ts">取得中...</footer>
 <script>
@@ -230,6 +262,89 @@ async function toggleBmsCtrl(){
 }
 renderBmsCtrl();refreshBmsCtrl();
 
+const DIRS=['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
+let lmap=null,lmark=null,lacc=null,follow=true,lastLL=null;
+function updateMap(lat,lon,fix,eph){
+  lastLL=[lat,lon];
+  if(!window.L){$('gps-mapmsg').textContent='地図ライブラリを読み込めませんでした';return;}
+  if(!lmap){
+    $('gps-mapmsg').style.display='none';
+    lmap=L.map('gps-mapbox',{zoomControl:true,attributionControl:true}).setView(lastLL,16);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,
+      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'}).addTo(lmap);
+    lacc=L.circle(lastLL,{radius:eph||10,weight:0,fillOpacity:.15}).addTo(lmap);
+    lmark=L.circleMarker(lastLL,{radius:7,weight:2,color:'#fff',fillOpacity:1}).addTo(lmap);
+    lmap.on('dragstart',()=>{follow=false;$('gps-follow').style.display='block';});
+  }
+  const col=fix?'#58a6ff':'#6e7681';
+  lmark.setLatLng(lastLL).setStyle({fillColor:col});
+  lacc.setLatLng(lastLL).setRadius(eph||10).setStyle({fillColor:col});
+  if(follow)lmap.panTo(lastLL,{animate:true});
+}
+function followGPS(){
+  follow=true;$('gps-follow').style.display='none';
+  if(lmap&&lastLL)lmap.setView(lastLL,Math.max(lmap.getZoom(),16));
+}
+function renderGPS(g){
+  const fx=$('gps-fix'),map=$('gps-map');
+  const set=(id,v)=>{$(id).textContent=v;};
+  if(!g||!g.connected){
+    fx.textContent='gpsd未接続';fx.className='r';map.style.display='none';
+    ['gps-ll','gps-spd','gps-trk','gps-alt','gps-sat','gps-eph'].forEach(id=>set(id,'--'));return;
+  }
+  const m=g.mode||0;
+  fx.textContent=m>=3?'3D測位':m==2?'2D測位':(g.lat!=null?'測位なし（最終位置）':'測位なし');
+  fx.className=m>=2?'g':'y';
+  if(g.lat!=null&&g.lon!=null){
+    set('gps-ll',g.lat.toFixed(6)+', '+g.lon.toFixed(6));
+    map.href='https://www.openstreetmap.org/?mlat='+g.lat.toFixed(6)+'&mlon='+g.lon.toFixed(6)+'#map=17/'+g.lat.toFixed(6)+'/'+g.lon.toFixed(6);
+    map.style.display='inline-block';
+    updateMap(g.lat,g.lon,m>=2,g.eph);
+  }else{set('gps-ll','--');map.style.display='none';}
+  set('gps-spd',g.speed_kmh!=null?g.speed_kmh.toFixed(1)+' km/h':'--');
+  set('gps-trk',g.track!=null?Math.round(g.track)+'° '+DIRS[Math.round(g.track/22.5)%16]:'--');
+  set('gps-alt',g.alt!=null&&m>=3?g.alt.toFixed(0)+' m':'--');
+  set('gps-sat',g.sats_used!=null?g.sats_used+' / '+(g.sats_seen??'--'):'--');
+  set('gps-eph',g.eph!=null?'±'+g.eph.toFixed(0)+' m':'--');
+}
+function dashAuthHeader(){
+  const pw=prompt('WebUI パスワード（Basic認証）','');
+  return pw==null?null:{Authorization:'Basic '+btoa('pi:'+pw)};
+}
+let camShownAt=null,camIv=null;
+async function refreshCamera(){
+  try{
+    const c=await fetch('/api/camera/info').then(r=>r.json());
+    camIv=c.interval_s;
+    const sel=$('cam-iv');
+    if(document.activeElement!==sel){
+      if(![...sel.options].some(o=>+o.value===camIv)){sel.add(new Option(camIv+'秒',camIv));}
+      sel.value=String(camIv);
+    }
+    const st=$('cam-st'),msg=$('cam-msg'),img=$('cam-img');
+    if(c.captured_at&&c.captured_at!==camShownAt){
+      camShownAt=c.captured_at;
+      img.src='/api/camera/snapshot.jpg?t='+c.captured_at;img.style.display='block';
+    }
+    const age=c.captured_at?Math.round(Date.now()/1000-c.captured_at):null;
+    st.textContent=camIv===0?'停止中':c.busy?'撮影中…':'';
+    st.className=camIv===0?'y':'';
+    msg.textContent=(age!=null?'撮影: '+new Date(c.captured_at*1000).toLocaleTimeString('ja-JP')+'（'+age+'秒前）':(camIv===0?'':'初回撮影中…（約10秒）'))
+      +(c.error?' ⚠ '+c.error:'');
+  }catch(e){}
+}
+async function setCamInterval(v){
+  const h=dashAuthHeader();
+  if(!h){refreshCamera();return;}
+  try{
+    const r=await fetch('/api/camera/settings',{method:'POST',
+      headers:{...h,'Content-Type':'application/json'},body:JSON.stringify({interval_s:+v})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){alert('変更できませんでした: '+(d.error||r.status));}
+  }catch(e){alert('通信エラー: '+e);}
+  refreshCamera();
+}
+
 async function refresh(){
   try{
     const d=await fetch('/api/status').then(r=>r.json());
@@ -267,11 +382,13 @@ async function refresh(){
       renderBMS($('bms1-body'),d.bms.bms1||null);
       renderBMS($('bms2-body'),d.bms.bms2||null);
     }
+    renderGPS(d.gps);
     const age=d.updated_at?Math.round((Date.now()-new Date(d.updated_at).getTime())/1000):null;
     $('ts').textContent='最終更新: '+new Date().toLocaleTimeString('ja-JP')+(age!=null?' ('+age+'秒前)':'');
   }catch(e){$('ts').textContent='通信エラー '+new Date().toLocaleTimeString('ja-JP');}
 }
 refresh();setInterval(refresh,5000);
+refreshCamera();setInterval(refreshCamera,5000);
 </script>
 
 <div class="card" style="margin-top:10px" id="graph-card">
@@ -1023,6 +1140,33 @@ def api_bms_ctrl_post():
     else:
         return jsonify({"ok": False, "error": "enabled(bool)は必須です"}), 400
     return jsonify({"ok": True, "enabled": bms_module.is_polling_enabled()})
+
+
+@app.route("/api/camera/info")
+def api_camera_info():
+    camera_module.touch()   # ダッシュボードを開いている間だけ撮影を続ける
+    return jsonify(camera_module.get_info())
+
+
+@app.route("/api/camera/snapshot.jpg")
+def api_camera_snapshot():
+    img, ts = camera_module.get_snapshot()
+    if img is None:
+        return jsonify({"error": "まだ撮影されていません"}), 503
+    resp = Response(img, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Captured-At"] = str(ts)
+    return resp
+
+
+@app.route("/api/camera/settings", methods=["POST"])
+@auth.login_required
+def api_camera_settings():
+    body = request.get_json(silent=True) or {}
+    ok, err = settings_store.set_camera_interval(body.get("interval_s"))
+    if ok:
+        return jsonify({"ok": True, "interval_s": camera_module.interval_s()})
+    return jsonify({"ok": False, "error": err}), 400
 
 
 @app.route("/api/history")

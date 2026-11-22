@@ -15,6 +15,8 @@ import history_store
 import settings_store
 import tracer as tracer_module
 import bms as bms_module
+import camera as camera_module
+import gps_monitor
 import webui
 import wifi_manager
 
@@ -61,6 +63,7 @@ def control_loop(tracer) -> dict:
                 logger.info("resume_charging skipped: BMS cell OV still active")
 
     data["bms"] = bms_module.get_status()
+    data["gps"] = gps_monitor.get_status()
     webui.set_status(data)
     return data
 
@@ -88,6 +91,10 @@ def main():
     bms_module.set_alert_callback(on_bms_ov)
     bms_module.start_polling(_shutdown)
     logger.info("BMS persistent monitoring started")
+
+    gps_monitor.start(_shutdown)
+    camera_module.start(_shutdown)
+    logger.info("GPS monitor and camera snapshot threads started")
 
     # APモード自動起動は無効化（車載HDMI+マウスで手動Wi-Fi設定する運用のため不要。
     # 散歩中のテザリング切替時など、わずかな切断でAPモードに入って復帰できなくなる問題があった）
