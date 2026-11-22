@@ -1,4 +1,4 @@
-# iot-pvcontrol プロジェクト
+# cariot（旧 iot-pvcontrol）プロジェクト
 
 ## プロジェクト概要
 
