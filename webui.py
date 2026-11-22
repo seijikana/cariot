@@ -307,10 +307,6 @@ function renderGPS(g){
   set('gps-sat',g.sats_used!=null?g.sats_used+' / '+(g.sats_seen??'--'):'--');
   set('gps-eph',g.eph!=null?'±'+g.eph.toFixed(0)+' m':'--');
 }
-function dashAuthHeader(){
-  const pw=prompt('WebUI パスワード（Basic認証）','');
-  return pw==null?null:{Authorization:'Basic '+btoa('pi:'+pw)};
-}
 let camShownAt=null,camIv=null;
 async function refreshCamera(){
   try{
@@ -334,11 +330,9 @@ async function refreshCamera(){
   }catch(e){}
 }
 async function setCamInterval(v){
-  const h=dashAuthHeader();
-  if(!h){refreshCamera();return;}
   try{
     const r=await fetch('/api/camera/settings',{method:'POST',
-      headers:{...h,'Content-Type':'application/json'},body:JSON.stringify({interval_s:+v})});
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({interval_s:+v})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok||!d.ok){alert('変更できませんでした: '+(d.error||r.status));}
   }catch(e){alert('通信エラー: '+e);}
@@ -1160,7 +1154,6 @@ def api_camera_snapshot():
 
 
 @app.route("/api/camera/settings", methods=["POST"])
-@auth.login_required
 def api_camera_settings():
     body = request.get_json(silent=True) or {}
     ok, err = settings_store.set_camera_interval(body.get("interval_s"))
