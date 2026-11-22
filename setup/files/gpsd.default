@@ -1,0 +1,4 @@
+# USB GPS (u-blox 7) は USBAUTO で自動認識される（/dev/ttyACM*）
+DEVICES=""
+GPSD_OPTIONS=""
+USBAUTO="true"

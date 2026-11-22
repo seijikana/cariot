@@ -1,3 +1,10 @@
+# CarIoT（車載 Zero 2 W）
+
+- セットアップ・復旧手順: [docs/SETUP.md](docs/SETUP.md)（自動化スクリプト `setup/setup_zero.sh`）
+- 依存ライブラリ: `requirements.txt`（動作確認済みバージョンに固定）
+
+---
+
 iot-pvcontrol/
 ├── CLAUDE.md          # Claude Code向けプロジェクト概要（このファイルを最初に読む）
 ├── README.md          # このファイル

@@ -1,0 +1,1 @@
+pi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start cariot, /usr/bin/systemctl stop cariot, /usr/bin/systemctl restart cariot, /usr/bin/systemctl daemon-reload

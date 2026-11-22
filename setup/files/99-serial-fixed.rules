@@ -1,0 +1,9 @@
+# GPS: DOCTORADIO GR7-10HZ (u-blox 7 chipset). No serial number on this device,
+# idVendor:idProduct is sufficiently unique on this bus.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", ATTRS{idProduct}=="01a7", SYMLINK+="ttyGPS"
+
+# Tracer MPPT USB-RS485 adapter (QinHeng CH9102 chip). Connected 2026-06-29.
+# Note: 1a86:55d3 is a common CH340/CH9102 VID:PID also used by many other
+# boards (ESP32 etc). If a second such adapter is added later, add
+# ATTRS{serial}=="58FC093513" to disambiguate.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", SYMLINK+="ttyTracer"
